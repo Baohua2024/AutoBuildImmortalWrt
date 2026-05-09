@@ -19,7 +19,23 @@ enable_pppoe=${ENABLE_PPPOE}
 pppoe_account=${PPPOE_ACCOUNT}
 pppoe_password=${PPPOE_PASSWORD}
 EOF
-
+# 预设 Transmission 配置文件
+cat << EOF > /home/build/immortalwrt/files/etc/config/transmission
+config transmission
+	option enabled '1'
+	option config_dir '/etc/config/transmission'
+	option download_dir '/mnt/sdb1/downloads'
+	option incomplete_dir '/mnt/sdb1/downloads'
+	option rpc_enabled 'true'
+	option rpc_port '9091'
+	option rpc_bind_address '0.0.0.0'
+	option rpc_url '/transmission/'
+	option rpc_authentication_required 'false'
+	option rpc_whitelist_enabled 'false'
+	option rpc_host_whitelist_enabled 'false'
+	# 关键：确保以 root 用户运行（解决挂载盘写入权限问题）
+	option user 'root'
+EOF
 echo "cat pppoe-settings"
 cat /home/build/immortalwrt/files/etc/config/pppoe-settings
 
@@ -30,19 +46,16 @@ else
   echo "🔄 正在同步第三方软件仓库 Cloning run file repo..."
   git clone --depth=1 https://github.com/wukongdaily/store.git /tmp/store-run-repo
 
-  # 拷贝 run/arm64 下所有 run 文件和ipk文件 到 extra-packages 目录
+  # 拷贝 run/x86_64 下所有 run 文件和ipk文件 到 extra-packages 目录
   mkdir -p /home/build/immortalwrt/extra-packages
-  cp -r /tmp/store-run-repo/run/arm64/* /home/build/immortalwrt/extra-packages/
+  cp -r /tmp/store-run-repo/run/x86_64/* /home/build/immortalwrt/extra-packages/
 
   echo "✅ Run files copied to extra-packages:"
   ls -lh /home/build/immortalwrt/extra-packages/*.run
   # 解压并拷贝ipk到packages目录
   sh shell/prepare-packages.sh
   ls -lah /home/build/immortalwrt/packages/
-  # 添加架构优先级信息
-  sed -i '1i\
-  arch aarch64_generic 10\n\
-  arch aarch64_cortex-a53 15' repositories.conf
+
 fi
 
 
@@ -64,6 +77,9 @@ PACKAGES="$PACKAGES luci-i18n-ttyd-zh-cn"
 PACKAGES="$PACKAGES xray-core hysteria luci-i18n-passwall-zh-cn"
 PACKAGES="$PACKAGES luci-app-openclash"
 PACKAGES="$PACKAGES luci-i18n-homeproxy-zh-cn"
+PACKAGES="$PACKAGES luci-i18n-filemanager-zh-cn"
+PACKAGES="$PACKAGES luci-i18n-transmission-zh-cn transmission-web-control-eth"
+PACKAGES="$PACKAGES luci-i18n-zerotier-zh-cn zerotier"
 # 判断是否需要编译 Docker 插件
 if [ "$INCLUDE_DOCKER" = "yes" ]; then
     PACKAGES="$PACKAGES luci-i18n-dockerman-zh-cn"
@@ -84,7 +100,7 @@ if echo "$PACKAGES" | grep -q "luci-app-openclash"; then
     echo "✅ 已选择 luci-app-openclash，添加 openclash core"
     mkdir -p files/etc/openclash/core
     # Download clash_meta
-    META_URL="https://raw.githubusercontent.com/vernesong/OpenClash/core/master/meta/clash-linux-arm64.tar.gz"
+    META_URL="https://raw.githubusercontent.com/vernesong/OpenClash/core/master/meta/clash-linux-amd64.tar.gz"
     wget -qO- $META_URL | tar xOvz > files/etc/openclash/core/clash_meta
     chmod +x files/etc/openclash/core/clash_meta
     # Download GeoIP and GeoSite
