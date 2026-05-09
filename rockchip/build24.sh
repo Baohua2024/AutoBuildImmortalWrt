@@ -80,6 +80,7 @@ PACKAGES="$PACKAGES luci-i18n-homeproxy-zh-cn"
 PACKAGES="$PACKAGES luci-i18n-filemanager-zh-cn"
 PACKAGES="$PACKAGES luci-i18n-transmission-zh-cn transmission-web-control-eth"
 PACKAGES="$PACKAGES luci-i18n-zerotier-zh-cn zerotier"
+PACKAGES="$PACKAGES luci-app-passwall2"
 # 判断是否需要编译 Docker 插件
 if [ "$INCLUDE_DOCKER" = "yes" ]; then
     PACKAGES="$PACKAGES luci-i18n-dockerman-zh-cn"
