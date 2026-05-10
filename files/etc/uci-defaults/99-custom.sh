@@ -3,6 +3,7 @@
 # Log file for debugging
 LOGFILE="/etc/config/uci-defaults-log.txt"
 echo "Starting 99-custom.sh at $(date)" >>$LOGFILE
+
 # 设置默认防火墙规则，方便单网口虚拟机首次访问 WebUI 
 # 因为本项目中 单网口模式是dhcp模式 直接就能上网并且访问web界面 避免新手每次都要修改/etc/config/network中的静态ip
 # 当你刷机运行后 都调整好了 你完全可以在web页面自行关闭 wan口防火墙的入站数据
@@ -23,11 +24,11 @@ else
     . "$SETTINGS_FILE"
 fi
 
-# 1. 先获取所有物理接口列表
+# 1. 先获取所有物理接口列表 (已改进：排除虚拟接口)
 ifnames=""
 for iface in /sys/class/net/*; do
     iface_name=$(basename "$iface")
-    if [ -e "$iface/device" ] && echo "$iface_name" | grep -Eq '^eth|^en'; then
+    if [ -e "$iface/device" ]; then
         ifnames="$ifnames $iface_name"
     fi
 done
@@ -95,14 +96,13 @@ elif [ "$count" -gt 1 ]; then
 
     # LAN口设置静态IP
     uci set network.lan.proto='static'
-    # 多网口设备 支持修改为别的管理后台地址 在Github Action 的UI上自行输入即可 
     uci set network.lan.netmask='255.255.255.0'
+    
     # 设置路由器管理后台地址
     IP_VALUE_FILE="/etc/config/custom_router_ip.txt"
     if [ -f "$IP_VALUE_FILE" ]; then
         CUSTOM_IP=$(cat "$IP_VALUE_FILE")
-        # 用户在UI上设置的路由器后台管理地址
-        uci set network.lan.ipaddr=$CUSTOM_IP
+        uci set network.lan.ipaddr="$CUSTOM_IP"
         echo "custom router ip is $CUSTOM_IP" >> $LOGFILE
     else
         uci set network.lan.ipaddr='192.168.5.1'
@@ -132,45 +132,47 @@ fi
 # 方便各类docker容器的端口顺利通过防火墙 
 if command -v dockerd >/dev/null 2>&1; then
     echo "检测到 Docker，正在配置防火墙规则..."
-    FW_FILE="/etc/config/firewall"
 
     # 删除所有名为 docker 的 zone
-    uci delete firewall.docker
+    uci -q delete firewall.docker
 
     # 先获取所有 forwarding 索引，倒序排列删除
     for idx in $(uci show firewall | grep "=forwarding" | cut -d[ -f2 | cut -d] -f1 | sort -rn); do
-        src=$(uci get firewall.@forwarding[$idx].src 2>/dev/null)
-        dest=$(uci get firewall.@forwarding[$idx].dest 2>/dev/null)
-        echo "Checking forwarding index $idx: src=$src dest=$dest"
+        src=$(uci -q get firewall.@forwarding[$idx].src)
+        dest=$(uci -q get firewall.@forwarding[$idx].dest)
         if [ "$src" = "docker" ] || [ "$dest" = "docker" ]; then
-            echo "Deleting forwarding @forwarding[$idx]"
-            uci delete firewall.@forwarding[$idx]
+            uci -q delete firewall.@forwarding[$idx]
         fi
     done
-    # 提交删除
+    
+    # --- 优雅的 UCI 写法 ---
+    
+    # 1. 创建 docker zone
+    uci set firewall.docker=zone
+    uci set firewall.docker.name='docker'
+    uci set firewall.docker.input='ACCEPT'
+    uci set firewall.docker.output='ACCEPT'
+    uci set firewall.docker.forward='ACCEPT'
+    uci add_list firewall.docker.subnet='172.16.0.0/12'
+
+    # 2. 添加转发：docker -> lan
+    uci add firewall forwarding >/dev/null
+    uci set firewall.@forwarding[-1].src='docker'
+    uci set firewall.@forwarding[-1].dest='lan'
+
+    # 3. 添加转发：docker -> wan
+    uci add firewall forwarding >/dev/null
+    uci set firewall.@forwarding[-1].src='docker'
+    uci set firewall.@forwarding[-1].dest='wan'
+
+    # 4. 添加转发：lan -> docker
+    uci add firewall forwarding >/dev/null
+    uci set firewall.@forwarding[-1].src='lan'
+    uci set firewall.@forwarding[-1].dest='docker'
+
+    # 统一提交保存
     uci commit firewall
-    # 追加新的 zone + forwarding 配置
-    cat <<EOF >>"$FW_FILE"
-
-config zone 'docker'
-  option input 'ACCEPT'
-  option output 'ACCEPT'
-  option forward 'ACCEPT'
-  option name 'docker'
-  list subnet '172.16.0.0/12'
-
-config forwarding
-  option src 'docker'
-  option dest 'lan'
-
-config forwarding
-  option src 'docker'
-  option dest 'wan'
-
-config forwarding
-  option src 'lan'
-  option dest 'docker'
-EOF
+    echo "Docker 防火墙规则配置完成。"
 
 else
     echo "未检测到 Docker，跳过防火墙配置。"
@@ -189,7 +191,7 @@ NEW_DESCRIPTION="Packaged by Baohua"
 sed -i "s/DISTRIB_DESCRIPTION='[^']*'/DISTRIB_DESCRIPTION='$NEW_DESCRIPTION'/" "$FILE_PATH"
 
 # 若luci-app-advancedplus (进阶设置)已安装 则去除zsh的调用 防止命令行报 /usb/bin/zsh: not found的提示
-if opkg list-installed | grep -q '^luci-app-advancedplus '; then
+if [ -f "/etc/init.d/advancedplus" ]; then
     sed -i '/\/usr\/bin\/zsh/d' /etc/profile
     sed -i '/\/bin\/zsh/d' /etc/init.d/advancedplus
     sed -i '/\/usr\/bin\/zsh/d' /etc/init.d/advancedplus
